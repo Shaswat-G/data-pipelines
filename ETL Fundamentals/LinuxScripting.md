@@ -982,10 +982,10 @@ if [[ "$record_count" -gt 1000000 ]]; then
     echo "Splitting file for parallel processing..."
     mkdir -p chunks
     split -l 100000 "data_${today}.csv" chunks/chunk_
-    
+
     echo "Processing chunks in parallel..."
     find chunks -name "chunk_*" | parallel -j 4 "./process_chunk.sh {}"
-    
+
     echo "Combining results..."
     cat chunks/processed_* > "processed_${today}.csv"
     rm -rf chunks
@@ -1001,10 +1001,10 @@ psql -h db.example.com -U etl_user -d analytics << EOF
 BEGIN;
 CREATE TEMP TABLE temp_import (LIKE target_table);
 \copy temp_import FROM 'processed_${today}.csv' WITH CSV HEADER
-INSERT INTO target_table 
-SELECT * FROM temp_import 
-ON CONFLICT (id) DO UPDATE 
-SET value = EXCLUDED.value, 
+INSERT INTO target_table
+SELECT * FROM temp_import
+ON CONFLICT (id) DO UPDATE
+SET value = EXCLUDED.value,
     updated_at = NOW();
 COMMIT;
 EOF
