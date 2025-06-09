@@ -588,3 +588,436 @@ date +%s > /var/run/temp_etl.timestamp
 ```
 
 This enhanced script includes error handling, logging, retry logic, and locks - all critical components for reliable scheduled ETL pipelines.
+
+## Database Connections in ETL Pipelines
+
+Loading data into databases is a critical final step in ETL pipelines. Properly handling database connections, credentials, and data loading requires special attention to security and efficiency.
+
+### Managing Database Credentials
+
+There are several approaches to handling database credentials in ETL scripts:
+
+#### Using Environment Variables
+
+Environment variables are the preferred method for storing sensitive connection information:
+
+```bash
+# Set environment variables in your script
+export PGHOST="database.example.com"
+export PGPORT="5432"
+export PGDATABASE="analytics"
+export PGUSER="etl_user"
+export PGPASSWORD="secure_password"
+
+# Use the environment variables with psql
+psql -c "SELECT count(*) FROM events"
+
+# Clear sensitive variables when done
+unset PGPASSWORD
+```
+
+#### Using Password Files
+
+For PostgreSQL, you can use a .pgpass file to avoid storing passwords in scripts:
+
+```bash
+# Create a .pgpass file in the user's home directory
+echo "database.example.com:5432:analytics:etl_user:secure_password" > ~/.pgpass
+chmod 600 ~/.pgpass  # Restrict permissions
+
+# Now you can connect without specifying password
+psql -h database.example.com -U etl_user -d analytics
+```
+
+#### Using Connection Strings
+
+Connection strings provide a compact way to specify all connection parameters:
+
+```bash
+# Full connection string with all parameters
+CONNECTION_STRING="postgresql://etl_user:secure_password@database.example.com:5432/analytics"
+
+# Use with tools that support connection strings
+psql "${CONNECTION_STRING}" -c "SELECT count(*) FROM events"
+```
+
+### Loading Data into PostgreSQL
+
+PostgreSQL offers several efficient methods for loading data:
+
+#### Using COPY Command
+
+The COPY command is the fastest way to load data into PostgreSQL:
+
+```bash
+# Load CSV file directly from filesystem (requires server access)
+psql -c "COPY target_table FROM '/path/to/data.csv' WITH CSV HEADER" mydatabase
+
+# Load CSV from stdin through a pipe
+cat data.csv | psql -c "COPY target_table FROM STDIN WITH CSV HEADER" mydatabase
+
+# With field delimiter and NULL handling
+cat data.csv | psql -c "COPY target_table FROM STDIN WITH CSV HEADER DELIMITER ',' NULL 'NULL'" mydatabase
+```
+
+#### Using \copy Meta-Command
+
+When you don't have direct server filesystem access, use the `\copy` meta-command:
+
+```bash
+# Create a SQL script with \copy command
+echo "\copy target_table FROM 'data.csv' WITH CSV HEADER" > load_data.sql
+
+# Execute the script
+psql -f load_data.sql mydatabase
+```
+
+#### Handling Errors During Load
+
+For robust ETL, handle errors during data loading:
+
+```bash
+# Stop on first error
+psql -v ON_ERROR_STOP=1 -c "COPY target_table FROM STDIN WITH CSV" mydatabase
+
+# Log rejected rows to a file
+psql -c "COPY target_table FROM STDIN WITH CSV LOG ERRORS INTO error_table REJECT LIMIT 10" mydatabase
+```
+
+### Complete PostgreSQL ETL Example
+
+Here's a complete example of extracting data, transforming it, and loading it into PostgreSQL:
+
+```bash
+#!/bin/bash
+# extract_transform_load.sh
+
+# Set up database connection securely
+export PGHOST="db.example.com"
+export PGPORT="5432"
+export PGDATABASE="analytics"
+export PGUSER="etl_user"
+
+# Use password from a separate secured file
+export PGPASSWORD=$(cat ~/.secure/db_password)
+
+# Extract data from API
+echo "Extracting data from API..."
+curl -s "https://api.example.com/data" | jq '.' > raw_data.json
+
+# Transform data - convert JSON to CSV
+echo "Transforming data..."
+jq -r '.records[] | [.id, .timestamp, .value] | @csv' raw_data.json > transformed_data.csv
+
+# Create temporary table for staging
+echo "Creating staging table..."
+psql -c "
+  CREATE TEMP TABLE staging_data (
+    id VARCHAR(50),
+    timestamp TIMESTAMP,
+    value NUMERIC
+  );
+"
+
+# Load data into staging table
+echo "Loading data into staging table..."
+cat transformed_data.csv | psql -c "
+  COPY staging_data FROM STDIN WITH CSV
+"
+
+# Merge data into target table (upsert pattern)
+echo "Merging data into target table..."
+psql -c "
+  INSERT INTO production_data (id, timestamp, value)
+  SELECT id, timestamp, value FROM staging_data
+  ON CONFLICT (id) DO UPDATE
+  SET timestamp = EXCLUDED.timestamp,
+      value = EXCLUDED.value
+"
+
+# Verify row count
+row_count=$(psql -t -c "SELECT COUNT(*) FROM staging_data")
+echo "Loaded ${row_count} rows"
+
+# Clean up
+rm raw_data.json transformed_data.csv
+unset PGPASSWORD
+
+echo "ETL process completed successfully"
+```
+
+## Essential Linux Utilities for ETL
+
+Beyond the core text processing commands, many other Linux utilities are invaluable for ETL pipelines.
+
+### File Download and Transfer
+
+#### wget and curl
+
+```bash
+# Download a file with wget
+wget https://example.com/data/dataset.csv
+
+# Download with authentication
+wget --user=username --password=password https://example.com/data/secure_dataset.csv
+
+# Recursive download with limits
+wget --recursive --level=1 --accept=csv https://example.com/data/
+
+# Using curl for downloads
+curl -o dataset.csv https://example.com/data/dataset.csv
+
+# With authentication and headers
+curl -u username:password -H "Accept: application/json" https://api.example.com/data
+```
+
+#### scp and rsync
+
+```bash
+# Copy file from remote server
+scp user@remote-server:/path/to/data.csv local_data.csv
+
+# Copy entire directory
+scp -r user@remote-server:/path/to/data_dir/ local_data_dir/
+
+# Using rsync for efficient transfers
+rsync -avz user@remote-server:/path/to/data_dir/ local_data_dir/
+
+# Rsync with deletion (mirror)
+rsync -avz --delete user@remote-server:/path/to/data_dir/ local_data_dir/
+```
+
+### File Compression and Archiving
+
+#### gzip, gunzip, and zcat
+
+```bash
+# Compress a file
+gzip large_file.csv  # Creates large_file.csv.gz
+
+# Decompress a file
+gunzip large_file.csv.gz
+
+# View compressed file without decompressing
+zcat large_file.csv.gz | head
+
+# Process compressed file directly
+zcat large_file.csv.gz | grep "pattern" > filtered_data.csv
+```
+
+#### tar
+
+```bash
+# Create a compressed archive
+tar -czf archive.tar.gz directory/
+
+# Extract a compressed archive
+tar -xzf archive.tar.gz
+
+# List contents of an archive
+tar -tzf archive.tar.gz
+
+# Extract specific files
+tar -xzf archive.tar.gz directory/specific_file.csv
+```
+
+### Date and Time Handling
+
+Date manipulation is essential for ETL scheduling and incremental loads:
+
+```bash
+# Get current date in YYYY-MM-DD format
+today=$(date +%Y-%m-%d)
+
+# Get yesterday's date
+yesterday=$(date -d "yesterday" +%Y-%m-%d)
+# Or on BSD/macOS:
+yesterday=$(date -v-1d +%Y-%m-%d)
+
+# Format timestamp for filenames
+timestamp=$(date +%Y%m%d_%H%M%S)
+output_file="data_extract_${timestamp}.csv"
+
+# Calculate date ranges
+start_date=$(date -d "7 days ago" +%Y-%m-%d)
+end_date=$(date +%Y-%m-%d)
+
+# Use in SQL queries
+psql -c "SELECT * FROM events WHERE date BETWEEN '${start_date}' AND '${end_date}'"
+```
+
+### Data Validation and Integrity
+
+#### md5sum and sha256sum
+
+```bash
+# Generate checksum for a file
+md5sum data.csv > data.csv.md5
+
+# Verify file integrity
+md5sum -c data.csv.md5
+
+# More secure SHA-256 checksum
+sha256sum data.csv > data.csv.sha256
+
+# Verify using SHA-256
+sha256sum -c data.csv.sha256
+```
+
+#### wc (word count)
+
+```bash
+# Count lines in a file
+wc -l data.csv
+
+# Verify expected row count
+expected_rows=1000
+actual_rows=$(wc -l < data.csv)
+if [ "$actual_rows" -ne "$expected_rows" ]; then
+  echo "Error: Expected $expected_rows rows, got $actual_rows"
+  exit 1
+fi
+```
+
+### Network Utilities
+
+#### netcat (nc)
+
+```bash
+# Test database connectivity
+nc -zv database.example.com 5432
+
+# Simple data transfer
+cat data.csv | nc receiver.example.com 9876
+```
+
+#### curl for API interaction
+
+```bash
+# POST data to an API
+curl -X POST -H "Content-Type: application/json" -d '{"key":"value"}' https://api.example.com/endpoint
+
+# POST form data
+curl -X POST -F "file=@data.csv" https://api.example.com/upload
+
+# Basic authentication
+curl -u username:password https://api.example.com/secure-endpoint
+```
+
+### Advanced Shell Features
+
+#### Process Substitution
+
+```bash
+# Compare output of two commands
+diff <(grep "ERROR" log1.txt) <(grep "ERROR" log2.txt)
+
+# Join files with different delimiters
+join <(cut -d, -f1,2 file1.csv) <(cut -d\| -f1,3 file2.txt)
+```
+
+#### Parallel Execution
+
+```bash
+# Using GNU Parallel to process multiple files
+parallel --jobs 4 "process_file.sh {}" ::: file1.csv file2.csv file3.csv file4.csv
+
+# Process chunks of a large file
+split -l 100000 large_file.csv chunk_
+parallel "process_chunk.sh {}" ::: chunk_*
+```
+
+### Complete ETL Utility Example
+
+Here's an example ETL script combining various utilities:
+
+```bash
+#!/bin/bash
+# comprehensive_etl.sh
+
+set -e  # Exit on any error
+
+# Setup
+today=$(date +%Y-%m-%d)
+log_file="etl_${today}.log"
+exec > >(tee -a "$log_file") 2>&1  # Log all output
+
+echo "=== ETL Process Started at $(date) ==="
+
+# Download data securely
+echo "Downloading data..."
+curl -s -u "$API_USER:$API_PASSWORD" \
+     "https://api.example.com/data?date=${today}" \
+     -o "raw_data_${today}.json"
+
+# Validate download
+if [[ ! -s "raw_data_${today}.json" ]]; then
+    echo "Error: Downloaded file is empty"
+    exit 1
+fi
+
+# Transform JSON to CSV
+echo "Transforming data..."
+jq -r '.data[] | [.id, .timestamp, .value] | @csv' "raw_data_${today}.json" > "data_${today}.csv"
+
+# Compress previous day's data
+yesterday=$(date -d "yesterday" +%Y-%m-%d)
+if [[ -f "data_${yesterday}.csv" ]]; then
+    echo "Archiving previous data..."
+    gzip -f "data_${yesterday}.csv"
+fi
+
+# Count records
+record_count=$(wc -l < "data_${today}.csv")
+echo "Processing ${record_count} records"
+
+# Data validation
+echo "Validating data..."
+if grep -q ",NULL," "data_${today}.csv"; then
+    echo "Warning: NULL values detected"
+fi
+
+# Split large files for parallel processing
+if [[ "$record_count" -gt 1000000 ]]; then
+    echo "Splitting file for parallel processing..."
+    mkdir -p chunks
+    split -l 100000 "data_${today}.csv" chunks/chunk_
+    
+    echo "Processing chunks in parallel..."
+    find chunks -name "chunk_*" | parallel -j 4 "./process_chunk.sh {}"
+    
+    echo "Combining results..."
+    cat chunks/processed_* > "processed_${today}.csv"
+    rm -rf chunks
+else
+    echo "Processing file..."
+    ./process_chunk.sh "data_${today}.csv" > "processed_${today}.csv"
+fi
+
+# Load into database
+echo "Loading data into database..."
+export PGPASSWORD=$(cat ~/.pgpass | grep analytics | cut -d: -f5)
+psql -h db.example.com -U etl_user -d analytics << EOF
+BEGIN;
+CREATE TEMP TABLE temp_import (LIKE target_table);
+\copy temp_import FROM 'processed_${today}.csv' WITH CSV HEADER
+INSERT INTO target_table 
+SELECT * FROM temp_import 
+ON CONFLICT (id) DO UPDATE 
+SET value = EXCLUDED.value, 
+    updated_at = NOW();
+COMMIT;
+EOF
+unset PGPASSWORD
+
+# Verify load
+load_count=$(psql -h db.example.com -U etl_user -d analytics -t -c "SELECT COUNT(*) FROM target_table WHERE date_trunc('day', created_at) = '${today}'")
+echo "Loaded ${load_count} records into database"
+
+# Generate checksums for audit
+md5sum "data_${today}.csv" "processed_${today}.csv" > "checksums_${today}.md5"
+
+echo "=== ETL Process Completed at $(date) ==="
+```
+
+These utilities and examples demonstrate the power and flexibility of Linux command-line tools for building robust ETL pipelines, from secure database connections to efficient file processing and comprehensive logging.
