@@ -12,6 +12,13 @@ Extraction is the process of retrieving data from various sources, which can inc
 
 This includes configuring access to data sources, writing queries or scripts to pull the data -> web scraping, API calls, or reading files - maybe static files or streaming data.
 
+#### Raw Data Sources:
+1. Archived files (CSV, JSON, XML)
+2. Relational databases (MySQL, PostgreSQL, Oracle)
+3. NoSQL databases (MongoDB, Cassandra)
+4. APIs (REST, GraphQL)
+5. Streaming data (Kafka, AWS Kinesis)
+
 #### Extraction Methods:
 - **Full Extraction**: Extracting the entire dataset each time
 - **Incremental Extraction**: Extracting only new or modified data since the last extraction
@@ -28,8 +35,10 @@ This includes configuring access to data sources, writing queries or scripts to 
 
 Transformation is the process of converting extracted data into a format suitable for analysis or storage. This can involve cleaning the data (removing duplicates, handling missing values), aggregating it (summarizing data), or reshaping it (pivoting tables, changing data types). The goal is to prepare the data so that it meets the requirements of the target system or application.
 
+Transformations decrease the data volume - which may lead to information loss (reducing sampling rate, aggregating data, etc.).
+
 #### Transformation Operations:
-1. **Data Cleaning**: Removing duplicates, handling missing values, and correcting errors, filtering.
+1. **Data Cleaning**: Removing duplicates, handling missing values, and correcting errors, data typing (cast into correct types), conversion (json to csv), filtering, normalization, standardization and leveling.
 2. **Data Aggregation**: Joining, Feature engineering, Summarizing data, calculating averages, totals, or other statistics.
 3. **Data Reshaping**: Pivoting tables, changing data types, and restructuring data to fit the target schema.
 4. **Data Enrichment**: Adding additional information from other sources
@@ -48,10 +57,14 @@ Transformation is the process of converting extracted data into a format suitabl
 Loading is the final step in the ETL process, where the transformed data is written to a target system, such as a data warehouse, database, or data lake. The goal of loading is to make the data available for analysis, reporting, or other downstream applications. This can involve inserting new records, updating existing ones, or overwriting data in the target system.
 
 #### Loading Methods:
-- **Batch Loading**: Loading data in scheduled batches
-- **Stream Loading**: Continuous loading of data as it arrives
+Complete loading is done when you want to replace the entire dataset in the target system, while incremental loading is used to update only the new or changed data. Incremental loading is subdivided into batch loading, stream loading.
+- **Batch Loading**: Loading data in scheduled batches (periodic loading - daily updates, hourly updates, scheduled by linux cron jobs . windows task scheduler.)
+- **Stream Loading**: Continuous loading of data as it arrives (continuous, real-time and event-triggered.)
 - **Bulk Loading**: High-performance loading of large datasets
 - **Incremental Loading**: Loading only new or changed data
+
+Push vs Pull data loading methodology - Client-server / publisher-subscriber architecture.
+Serial vs Parallel loading - Serial loading is done sequentially, while parallel loading processes (chunking) multiple data streams simultaneously to improve performance. Analogy to Dataloaders in PyTorch.
 
 #### Loading Considerations:
 - **Data Integrity**: Ensuring data is loaded correctly and completely
@@ -189,6 +202,10 @@ ETL (Extract, Transform, Load) and ELT (Extract, Load, Transform) are two differ
 
 In ETL, data is extracted from source systems, transformed into a suitable format, and then loaded into a target system. The transformation step is performed before loading the data, which means that the data is cleaned, aggregated, and reshaped before it is stored in the target system.
 
+schema-on-write approach: Schema is defined before loading into the target system, ensuring that data adheres to a predefined structure. To have the data consistent and efficieient for optimized downstream queries.
+
+ETL may have information loss due to transformations.
+
 **Characteristics:**
 - Transformations occur in a dedicated transformation engine
 - Optimized for structured data
@@ -213,6 +230,10 @@ In ETL, data is extracted from source systems, transformed into a suitable forma
 ### ELT (Extract, Load, Transform)
 
 While transformations are basic in ETL, they can be more complex, dynamic and flexible in ELT. In ELT, data is extracted from source systems, loaded into the target system, and then transformed within the target system. This allows for more complex transformations and processing to be performed on the data after it has been loaded, leveraging the computational power of modern data platforms.
+
+schema-on-read approach: Data is loaded in its raw form, and the schema is applied when the data is read or queried. This allows for greater flexibility in how data is structured and used.
+
+ELT does not have information loss due to transformations, as raw data is preserved.
 
 **Characteristics:**
 - Transformations occur within the target system
