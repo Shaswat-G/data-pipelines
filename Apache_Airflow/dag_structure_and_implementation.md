@@ -575,189 +575,152 @@ DAG arguments configure the behavior of your DAG. They control scheduling, error
    )
    ```
 
-## Creating Tasks for a DAG
+## Components of a DAG Definition File
 
-Tasks are the fundamental units of execution in Airflow. Each task is an instance of an operator and represents a single unit of work within your workflow.
+A DAG definition file in Airflow is a Python script that specifies the structure and behavior of a workflow. Here's a breakdown of the key components that make up a typical DAG file:
 
-### Basic Task Creation
+### 1. Imports and Dependencies
 
-Tasks are created by instantiating an operator class with the required parameters:
+Every DAG file starts with the necessary imports:
 
 ```python
-from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
+# Standard library imports
+from datetime import datetime, timedelta
 
-# Create a bash task
-bash_task = BashOperator(
-    task_id='hello_world',
-    bash_command='echo "Hello, World!"',
+# Airflow-specific imports
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
+from airflow.providers.http.sensors.http import HttpSensor
+from airflow.models.baseoperator import chain
+
+# Custom module imports
+from my_project.hooks import CustomHook
+from my_project.utils import data_processing_functions
+```
+
+### 2. Default Arguments
+
+Default arguments are passed to all tasks in the DAG, making it easier to apply common settings:
+
+```python
+default_args = {
+    'owner': 'data_engineering',
+    'depends_on_past': False,
+    'email': ['alerts@example.com'],
+    'email_on_failure': True,
+    'email_on_retry': False,
+    'retries': 3,
+    'retry_delay': timedelta(minutes=5),
+    'execution_timeout': timedelta(hours=2),
+    'start_date': datetime(2023, 1, 1),
+    'on_failure_callback': notify_failure,
+    'on_success_callback': notify_success,
+    'sla': timedelta(hours=1),
+}
+```
+
+### 3. DAG Definition
+
+The core DAG object that defines the workflow's properties:
+
+```python
+dag = DAG(
+    'etl_customer_data',
+    default_args=default_args,
+    description='ETL pipeline for customer data processing',
+    schedule_interval='0 2 * * *',  # Run at 2 AM every day
+    catchup=False,
+    tags=['etl', 'customer', 'production'],
+    max_active_runs=1,
+    concurrency=5,
+    is_paused_upon_creation=False,
+    doc_md="""
+    # Customer Data ETL Pipeline
+    This pipeline extracts customer data from CRM systems, transforms it,
+    and loads it into the data warehouse for analytics.
+
+    ## Owner
+    Data Engineering Team
+    """
+)
+```
+
+### 4. Task Definitions
+
+Individual tasks that make up the workflow:
+
+```python
+# Task 1: Extract data from API
+extract_task = HttpSensor(
+    task_id='check_api_availability',
+    http_conn_id='crm_api',
+    endpoint='health',
+    request_params={},
+    response_check=lambda response: response.status_code == 200,
+    poke_interval=60,
+    timeout=600,
     dag=dag,
 )
 
-# Create a Python task
-def my_python_function(ds, **kwargs):
-    print(f"Execution date is: {ds}")
-    return "Function executed successfully"
+# Task 2: Download data
+download_task = PythonOperator(
+    task_id='download_customer_data',
+    python_callable=download_from_api,
+    op_kwargs={'api_endpoint': 'customers', 'limit': 1000},
+    dag=dag,
+)
 
-python_task = PythonOperator(
-    task_id='python_example',
-    python_callable=my_python_function,
+# Task 3: Transform data
+transform_task = PythonOperator(
+    task_id='transform_customer_data',
+    python_callable=transform_customer_data,
+    dag=dag,
+)
+
+# Task 4: Load to data warehouse
+load_task = PythonOperator(
+    task_id='load_to_data_warehouse',
+    python_callable=load_to_warehouse,
+    dag=dag,
+)
+
+# Task 5: Validate data
+validate_task = BashOperator(
+    task_id='validate_loaded_data',
+    bash_command='python /scripts/validate_data.py --date {{ ds }}',
     dag=dag,
 )
 ```
 
-### Common Task Parameters
+### 5. Task Dependencies
 
-All tasks (regardless of operator type) accept these parameters:
+Define the execution order and dependencies between tasks:
 
-1. **`task_id`**
+```python
+# Method 1: Using bitshift operators
+extract_task >> download_task >> transform_task >> load_task >> validate_task
 
-   - Unique identifier for the task within the DAG
-   - Used in logs, UI, and when referencing tasks
-   - Should be descriptive and follow a consistent naming convention
+# Method 2: Using set_upstream/set_downstream
+# extract_task.set_downstream(download_task)
+# download_task.set_downstream(transform_task)
+# transform_task.set_downstream(load_task)
+# load_task.set_downstream(validate_task)
 
-2. **`dag`**
+# Method 3: Using chain function
+# chain(extract_task, download_task, transform_task, load_task, validate_task)
+```
 
-   - Reference to the DAG the task belongs to
-   - Can be omitted when using the context manager pattern
+### 6. Additional Components
 
-   ```python
-   with DAG('example_dag', ...) as dag:
-       # No need to specify dag=dag here
-       task = BashOperator(task_id='example', bash_command='echo "Hello"')
-   ```
+#### TaskGroups
 
-3. **`trigger_rule`**
-
-   - Defines the rule by which the task gets triggered
-   - Default is `all_success` (all upstream tasks succeeded)
-   - Options include:
-     - `all_success`: All upstream tasks succeeded
-     - `all_failed`: All upstream tasks failed
-     - `all_done`: All upstream tasks are done (regardless of status)
-     - `one_success`: At least one upstream task succeeded
-     - `one_failed`: At least one upstream task failed
-     - `none_failed`: All upstream tasks have not failed (succeeded or skipped)
-     - `none_skipped`: No upstream task is in a skipped state
-
-   ```python
-   # This task will run if at least one upstream task succeeds
-   clean_up_task = BashOperator(
-       task_id='clean_up',
-       bash_command='echo "Cleaning up..."',
-       trigger_rule='one_success',
-   )
-   ```
-
-4. **`retries`** and **`retry_delay`**
-
-   - Override the DAG-level retry configuration
-   - Useful for tasks with different reliability profiles
-
-   ```python
-   # This task will retry more times than the DAG default
-   critical_task = PythonOperator(
-       task_id='critical_operation',
-       python_callable=critical_function,
-       retries=10,  # More retries for this critical task
-       retry_delay=timedelta(minutes=2),
-   )
-   ```
-
-5. **`priority_weight`**
-
-   - Gives priority to tasks when executor has limited parallelism
-   - Tasks with higher priority_weight run first
-
-   ```python
-   high_priority_task = BashOperator(
-       task_id='high_priority',
-       bash_command='echo "Important!"',
-       priority_weight=10,  # Higher than default of 1
-   )
-   ```
-
-6. **`pool`**
-
-   - Assign task to a named pool of workers
-   - Controls concurrency for resource-intensive tasks
-
-   ```python
-   # Limit concurrent execution of resource-intensive tasks
-   heavy_task = PythonOperator(
-       task_id='resource_intensive_task',
-       python_callable=heavy_processing,
-       pool='limited_resources_pool',  # Pool must be defined in Airflow UI/config
-   )
-   ```
-
-7. **`execution_timeout`**
-   - Maximum time a task is allowed to run
-   - Task will fail if it exceeds this time
-   ```python
-   # Task will fail if it runs longer than 30 minutes
-   task_with_timeout = BashOperator(
-       task_id='bounded_task',
-       bash_command='sleep 1800',  # 30 minutes
-       execution_timeout=timedelta(minutes=30),
-   )
-   ```
-
-### Operator-Specific Parameters
-
-Each operator type has its own specific parameters:
-
-1. **PythonOperator**
-
-   ```python
-   python_task = PythonOperator(
-       task_id='python_task',
-       python_callable=my_function,  # Function to execute
-       op_kwargs={'param1': 'value1'},  # Keyword arguments for the function
-       op_args=['positional1', 'positional2'],  # Positional arguments
-       provide_context=True,  # Pass Airflow context to the function (deprecated in newer versions)
-   )
-   ```
-
-2. **BashOperator**
-
-   ```python
-   bash_task = BashOperator(
-       task_id='bash_task',
-       bash_command='echo "Current date: $(date)"',
-       env={'ENV_VAR': 'value'},  # Environment variables
-       append_env=True,  # Whether to append rather than overwrite env
-       output_encoding='utf-8',  # Encoding of command output
-   )
-   ```
-
-3. **HTTPOperator**
-
-   ```python
-   from airflow.providers.http.operators.http import SimpleHttpOperator
-
-   http_task = SimpleHttpOperator(
-       task_id='http_task',
-       http_conn_id='http_default',  # Connection defined in Airflow
-       endpoint='/api/data',  # Path to append to connection URL
-       method='POST',  # HTTP method
-       data=json.dumps({"key": "value"}),  # Request payload
-       headers={"Content-Type": "application/json"},  # HTTP headers
-       response_check=lambda response: response.status_code == 200,  # Validate response
-   )
-   ```
-
-### Task Groups
-
-For complex DAGs with many tasks, you can organize tasks into logical groups:
+Organize related tasks into logical groups:
 
 ```python
 from airflow.utils.task_group import TaskGroup
 
 with DAG('example_dag', ...) as dag:
-
-    start = DummyOperator(task_id='start')
-
     # Create a task group for data extraction
     with TaskGroup(group_id='extract_tasks') as extract_group:
         extract_task1 = PythonOperator(
@@ -788,7 +751,7 @@ with DAG('example_dag', ...) as dag:
     start >> extract_group >> transform_group >> end
 ```
 
-### Dynamic Task Generation
+#### Dynamic Task Generation
 
 Tasks can be generated dynamically based on configurations or runtime conditions:
 
@@ -831,253 +794,194 @@ with DAG('process_multiple_tables', ...) as dag:
     start >> process_tasks >> end
 ```
 
-## Defining Task Dependencies
+#### Cross-DAG Dependencies
 
-Task dependencies determine the order in which tasks execute in a DAG. They define the workflow's structure by creating directional relationships between tasks.
-
-### Bitshift Operators
-
-The most common and readable way to set dependencies uses bitshift operators:
-
-1. **Linear Dependencies**
-
-   ```python
-   # task_1 must complete successfully before task_2 begins, and so on
-   task_1 >> task_2 >> task_3 >> task_4
-
-   # Equivalent to:
-   task_4 << task_3 << task_2 << task_1
-   ```
-
-2. **Fan-Out (One-to-Many)**
-
-   ```python
-   # task_1 must complete before task_2, task_3, and task_4 can begin
-   task_1 >> [task_2, task_3, task_4]
-
-   # Equivalent to:
-   task_1 >> task_2
-   task_1 >> task_3
-   task_1 >> task_4
-   ```
-
-3. **Fan-In (Many-to-One)**
-
-   ```python
-   # task_4 can only begin after task_1, task_2, and task_3 all complete successfully
-   [task_1, task_2, task_3] >> task_4
-
-   # Equivalent to:
-   task_1 >> task_4
-   task_2 >> task_4
-   task_3 >> task_4
-   ```
-
-4. **Complex Dependency Chains**
-
-   ```python
-   # Combine multiple dependency patterns
-   task_1 >> [task_2, task_3] >> task_4
-   task_1 >> task_5 >> task_4
-
-   # Creates this structure:
-   #    ┌─► task_2 ─┐
-   #    │           ▼
-   # task_1        task_4
-   #    │           ▲
-   #    └─► task_3 ─┘
-   #    │
-   #    └─► task_5 ─► task_4
-   ```
-
-### Set Methods
-
-Before bitshift operators, dependencies were set using explicit methods:
+Define dependencies between tasks in different DAGs:
 
 ```python
-# task_1 must complete before task_2 can begin
-task_2.set_upstream(task_1)
-# or equivalently:
-task_1.set_downstream(task_2)
+from airflow.sensors.external_task import ExternalTaskSensor
 
-# For multiple dependencies
-task_4.set_upstream([task_1, task_2, task_3])
-# or equivalently:
-task_1.set_downstream(task_4)
-task_2.set_downstream(task_4)
-task_3.set_downstream(task_4)
+wait_for_other_dag = ExternalTaskSensor(
+    task_id='wait_for_upstream_dag',
+    external_dag_id='upstream_dag',
+    external_task_id='final_task',
+    execution_delta=timedelta(hours=1),
+    dag=dag,
+)
+
+wait_for_other_dag >> extract_task
 ```
 
-These methods are still useful when programmatically creating dependencies:
+### 7. Jinja Templating
+
+Use templating for dynamic values and runtime information:
 
 ```python
-for source_task in source_tasks:
-    for target_task in target_tasks:
-        target_task.set_upstream(source_task)
-```
+templated_command = """
+    {% for param in params.parameters %}
+    echo "Parameter: {{ param }}"
+    {% endfor %}
+    echo "Execution Date: {{ ds }}"
+    echo "Previous Execution Date: {{ prev_ds }}"
+    echo "Next Execution Date: {{ next_ds }}"
+    echo "Data Interval Start: {{ data_interval_start }}"
+    echo "Data Interval End: {{ data_interval_end }}"
+"""
 
-### Chain and Cross-Downstream Functions
-
-For more complex dependency structures, Airflow provides utility functions:
-
-1. **`chain`**: Create a linear chain of dependencies
-
-   ```python
-   from airflow.models.baseoperator import chain
-
-   # Create a linear chain: task_1 >> task_2 >> task_3 >> task_4
-   chain(task_1, task_2, task_3, task_4)
-
-   # Chain can also work with lists (unpacking)
-   chain(task_1, [task_2a, task_2b, task_2c], task_3)
-   # Creates: task_1 >> task_2a >> task_2b >> task_2c >> task_3
-   ```
-
-2. **`cross_downstream`**: Create cross-product dependencies between lists
-
-   ```python
-   from airflow.models.baseoperator import cross_downstream
-
-   # Create dependencies where each task in the first list is upstream
-   # of every task in the second list
-   cross_downstream([task_1, task_2], [task_3, task_4, task_5])
-
-   # Equivalent to:
-   task_1 >> task_3
-   task_1 >> task_4
-   task_1 >> task_5
-   task_2 >> task_3
-   task_2 >> task_4
-   task_2 >> task_5
-
-   # Creates this structure:
-   #  task_1 ─────┬─────┬─────┐
-   #              │     │     │
-   #              ▼     ▼     ▼
-   #            task_3 task_4 task_5
-   #              ▲     ▲     ▲
-   #              │     │     │
-   #  task_2 ─────┴─────┴─────┘
-   ```
-
-### Conditional Dependencies with Branching
-
-Branching allows for conditional execution paths in the DAG:
-
-```python
-from airflow.operators.python import BranchPythonOperator
-
-def branch_func(**context):
-    if context['execution_date'].day % 2 == 0:
-        return 'even_day_task'
-    else:
-        return 'odd_day_task'
-
-branch_task = BranchPythonOperator(
-    task_id='branch_task',
-    python_callable=branch_func,
-)
-
-even_day_task = BashOperator(
-    task_id='even_day_task',
-    bash_command='echo "Today is an even day"',
-)
-
-odd_day_task = BashOperator(
-    task_id='odd_day_task',
-    bash_command='echo "Today is an odd day"',
-)
-
-# Only one of these will execute based on the branch_func return value
-branch_task >> [even_day_task, odd_day_task]
-
-# If you want to continue the flow after the conditional branch
-join_task = DummyOperator(
-    task_id='join_task',
-    trigger_rule='one_success',  # Important: will run after whichever branch executes
-)
-
-even_day_task >> join_task
-odd_day_task >> join_task
-```
-
-### Trigger Rules
-
-Trigger rules modify how a task determines when to execute based on its upstream tasks:
-
-```python
-# Default: Run only when all upstream tasks succeed
-default_task = DummyOperator(
-    task_id='default_task',
-    trigger_rule='all_success',  # This is the default
-)
-
-# Run when at least one upstream task succeeds
-one_success_task = DummyOperator(
-    task_id='one_success_task',
-    trigger_rule='one_success',
-)
-
-# Run when all upstream tasks are done (regardless of success/failure)
-cleanup_task = BashOperator(
-    task_id='cleanup_task',
-    bash_command='echo "Cleaning up resources"',
-    trigger_rule='all_done',
-)
-
-# Run when all upstream tasks have failed
-notification_task = EmailOperator(
-    task_id='failure_notification',
-    to='team@example.com',
-    subject='DAG failed',
-    html_content='All tasks have failed, please investigate.',
-    trigger_rule='all_failed',
-)
-
-# Run when all upstream tasks have succeeded or been skipped
-flexible_task = DummyOperator(
-    task_id='flexible_task',
-    trigger_rule='none_failed',
+templated_task = BashOperator(
+    task_id='templated_task',
+    bash_command=templated_command,
+    params={'parameters': ['param1', 'param2', 'param3']},
+    dag=dag,
 )
 ```
 
-### Dependency Best Practices
+### 8. Comments and Documentation
 
-1. **Keep DAGs Readable**
+Good DAG files include extensive documentation:
 
-   - Group related dependencies together in your code
-   - Use comments to explain complex dependency structures
-   - Consider using task groups for complex DAGs
+```python
+"""
+# Customer Data Processing Pipeline
 
-2. **Avoid Circular Dependencies**
+This DAG processes customer data from our CRM system and loads it into the data warehouse.
 
-   - Ensure your DAG remains acyclic
-   - Airflow will detect cycles at parse time
+## Schedule
+Runs daily at 2 AM UTC
 
-3. **Be Mindful of Parallelism**
+## Dependencies
+- Requires CRM API access
+- Requires data warehouse write permissions
 
-   - Design dependencies to maximize parallelism where appropriate
-   - Consider resource constraints when allowing parallel execution
+## Alerts
+Failures are sent to: alerts@example.com
 
-4. **Create Logical Checkpoints**
+## Owner
+Data Engineering Team (data-eng@example.com)
+"""
 
-   - Use dummy operators as join points for clarity
-   - This helps visualize the workflow stages in the UI
+# The DAG object definition with required parameters
+dag = DAG(
+    'customer_data_processing',
+    # DAG parameters here
+)
+```
 
-5. **Use Consistent Dependency Style**
-   - Stick to bitshift operators when possible for readability
-   - Use consistent indentation for dependency definitions
+## DAG Lifecycle and States
 
-### Example: Complete DAG with Dependencies
+Understanding the lifecycle and states of a DAG in Airflow is crucial for managing and debugging workflows. A DAG's lifecycle includes various states from creation to execution, and finally to completion or failure.
 
-Here's an example of a complete DAG with various dependency patterns:
+### 1. DAG States
+
+A DAG can be in one of the following states:
+
+- **Paused**: The DAG is not running; no tasks will be executed. This can be set manually in the UI or via the `is_paused_upon_creation` parameter.
+
+- **Unpaused**: The DAG is active and will run according to its schedule.
+
+- **Running**: The DAG is currently being executed. This state is transient and indicates that at least one task is in the running state.
+
+- **Success**: The DAG has completed all its tasks successfully.
+
+- **Failed**: The DAG has failed due to one or more tasks failing.
+
+- **Skipped**: A task in the DAG was skipped, usually due to a branching condition.
+
+- **Upstream Failed**: The DAG run was unsuccessful because a task upstream in the dependency chain failed.
+
+- **Retry**: The task is scheduled to retry after a failure.
+
+- **Queued**: The task is waiting in the queue to be picked up by a worker.
+
+- **Scheduled**: The task is scheduled to run but has not yet started.
+
+- **Deferred**: The task is deferred and will be resumed later.
+
+### 2. Task Instance States
+
+Each task in a DAG has its own state, which can be one of the following:
+
+- **None**: The task has not been executed yet.
+
+- **Queued**: The task is waiting to be picked up by a worker.
+
+- **Running**: The task is currently being executed.
+
+- **Success**: The task has completed successfully.
+
+- **Failed**: The task has failed.
+
+- **Skipped**: The task was skipped, usually due to a branching condition.
+
+- **Upstream Failed**: The task did not run because an upstream task failed.
+
+- **Retry**: The task is scheduled to retry after a failure.
+
+### 3. Lifecycle Phases
+
+The lifecycle of a DAG can be divided into the following phases:
+
+- **Creation**: The DAG is created and added to the Airflow metadata database. At this point, it is in the "paused" state by default.
+
+- **Parsing**: Airflow parses the DAG file to understand the structure, tasks, and dependencies.
+
+- **Scheduling**: The DAG is scheduled to run at the next available interval based on its `schedule_interval`.
+
+- **Execution**: The tasks in the DAG are executed according to their dependencies and the defined order.
+
+- **Completion**: Once all tasks are complete, the DAG run is marked as successful. If any task fails, the DAG run is marked as failed.
+
+- **Cleanup**: Temporary files, logs, and other artifacts are cleaned up based on the defined policies.
+
+### 4. Triggering DAGs
+
+DAGs can be triggered in several ways:
+
+- **Scheduled**: Automatically based on the `schedule_interval`.
+
+- **Manual**: Triggered manually through the Airflow UI or CLI.
+
+- **API**: Triggered via an API call to the Airflow REST API.
+
+- **External Trigger**: Triggered by an external system or event, such as the completion of another DAG.
+
+### 5. Monitoring and Logging
+
+Monitoring the state and progress of DAGs is crucial for ensuring reliable data workflows. Airflow provides several tools for monitoring:
+
+- **Airflow UI**: The web interface provides a visual representation of DAG runs, task instances, and their states. You can also view logs and trigger manual runs from the UI.
+
+- **Logs**: Airflow logs detailed information about each task instance's execution, including errors and stack traces. Logs can be viewed in the UI or accessed directly on the Airflow server.
+
+- **Metrics**: Airflow exposes metrics that can be used to monitor the performance and health of DAGs and task instances. These metrics can be integrated with monitoring systems like Prometheus and Grafana.
+
+- **Alerts**: You can configure email alerts or other notification mechanisms to be informed about DAG failures, retries, and other important events.
+
+### 6. Best Practices for DAG Lifecycle Management
+
+- **Idempotency**: Design DAGs and tasks to be idempotent, meaning they can be safely retried or executed multiple times without causing unintended effects.
+
+- **Error Handling**: Implement robust error handling and retry logic to handle transient errors and failures.
+
+- **Monitoring**: Regularly monitor DAG runs, task instances, and system metrics to detect and address issues proactively.
+
+- **Documentation**: Keep DAG documentation up to date, including descriptions, owner information, and operational procedures.
+
+- **Version Control**: Use version control for DAG definition files to track changes and facilitate collaboration.
+
+- **Testing**: Test DAGs and tasks in a development or staging environment before deploying to production.
+
+- **Cleanup**: Regularly clean up old DAG runs, logs, and other artifacts to free up resources and keep the Airflow environment tidy.
+
+### Example: DAG Lifecycle and States
+
+Here's an example that demonstrates the lifecycle and states of a DAG:
 
 ```python
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.dummy import DummyOperator
-from airflow.operators.python import PythonOperator, BranchPythonOperator
-from airflow.utils.task_group import TaskGroup
+from airflow.operators.python import PythonOperator
 
 # Define default arguments
 default_args = {
@@ -1090,68 +994,55 @@ default_args = {
 
 # Create the DAG
 with DAG(
-    'complex_data_workflow',
+    'example_dag_lifecycle',
     default_args=default_args,
-    description='Example of complex dependency patterns',
+    description='Demonstrates DAG lifecycle and states',
     schedule_interval='@daily',
     start_date=datetime(2023, 1, 1),
     catchup=False,
-    tags=['example', 'dependencies'],
+    tags=['example', 'lifecycle'],
 ) as dag:
 
-    # Start task
     start = DummyOperator(task_id='start')
 
-    # Task group for data extraction
-    with TaskGroup(group_id='extract') as extract_group:
-        extract_customers = DummyOperator(task_id='extract_customers')
-        extract_orders = DummyOperator(task_id='extract_orders')
-        extract_products = DummyOperator(task_id='extract_products')
+    def process_data(**kwargs):
+        # Simulate data processing
+        print("Processing data...")
+        return "Data processed"
 
-    # Data validation with branching
-    def validate_data(**context):
-        # Dummy logic for example
-        if context['execution_date'].day % 2 == 0:
-            return 'validation_success'
-        else:
-            return 'validation_failed'
-
-    validate = BranchPythonOperator(
-        task_id='validate_data',
-        python_callable=validate_data,
+    process_task = PythonOperator(
+        task_id='process_data',
+        python_callable=process_data,
     )
 
-    validation_success = DummyOperator(task_id='validation_success')
-    validation_failed = DummyOperator(task_id='validation_failed')
-
-    # Task group for transformation (only runs after successful validation)
-    with TaskGroup(group_id='transform') as transform_group:
-        transform_customers = DummyOperator(task_id='transform_customers')
-        transform_orders = DummyOperator(task_id='transform_orders')
-        transform_products = DummyOperator(task_id='transform_products')
-
-        # Set dependencies within the transform group
-        [transform_customers, transform_orders] >> transform_products
-
-    # Load task (runs after transformation)
-    load_data = DummyOperator(task_id='load_data')
-
-    # Cleanup and notification tasks (run regardless of success/failure)
-    cleanup = DummyOperator(
-        task_id='cleanup',
-        trigger_rule='all_done',  # Run regardless of upstream success/failure
-    )
-
-    notify = DummyOperator(task_id='send_notification')
-
-    # End task
     end = DummyOperator(task_id='end')
 
-    # Define the overall workflow dependencies
-    start >> extract_group >> validate >> [validation_success, validation_failed]
-    validation_success >> transform_group >> load_data
-    validation_failed >> cleanup
-    load_data >> cleanup >> notify >> end
+    # Define dependencies
+    start >> process_task >> end
 ```
 
-This example demonstrates multiple dependency patterns including linear dependencies, fan-out, fan-in, conditional branching, and task groups, all working together in a single DAG.
+In this example, the DAG goes through the following states:
+
+1. **Paused**: The DAG is created and paused by default.
+
+2. **Unpaused**: The DAG is unpaused and scheduled to run at the next interval.
+
+3. **Running**: The DAG is picked up by the scheduler and the tasks are executed.
+
+4. **Success**: The DAG completes successfully if all tasks succeed.
+
+5. **Failed**: The DAG is marked as failed if any task fails and the retry limit is reached.
+
+6. **Skipped**: A task can be skipped based on a branching condition.
+
+7. **Upstream Failed**: A downstream task fails due to an upstream task failure.
+
+8. **Retry**: A task is retried after a failure.
+
+9. **Queued**: A task is waiting in the queue to be picked up by a worker.
+
+10. **Scheduled**: A task is scheduled to run but has not yet started.
+
+11. **Deferred**: A task is deferred and will be resumed later.
+
+The DAG can be monitored and managed through the Airflow UI, where you can view the state of the DAG and its tasks, trigger manual runs, and view logs and metrics.
