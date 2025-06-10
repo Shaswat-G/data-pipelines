@@ -1,8 +1,61 @@
-# Intro
+# Apache Airflow
+
+## Introduction
 
 Open-source (great support community) platform for orchestrating complex computational workflows (DAGs). It lets you build and run workflows.
 
 Note: Airflow is not a workflow engine, it is a workflow orchestrator. And, it is not a data streaming solution.
+
+## Main Principles and Features
+
+### Core Principles
+
+Apache Airflow is built around several fundamental principles that guide its design and functionality:
+
+1. **Dynamic**: Airflow pipelines are configured as code, allowing for dynamic pipeline generation and programmatic construction.
+
+2. **Extensible**: Easily define your own operators, executors, and extend the library to fit the level of abstraction that suits your environment.
+
+3. **Elegant**: Airflow pipelines are lean and explicit. Parameterizing your scripts becomes a natural extension of the configuration as code paradigm.
+
+4. **Scalable**: Airflow has a modular architecture using a message queue to orchestrate an arbitrary number of workers.
+
+### Key Features
+
+1. **Pure Python Workflows**: Define your workflows in pure Python, making them maintainable, versionable, testable, and collaborative.
+
+2. **Rich Command Line Utilities**: Control and monitor your workflows from the command line interface.
+
+3. **Comprehensive Web UI**: Monitor, schedule, and manage workflows through an intuitive user interface.
+
+4. **Extensive Integration Ecosystem**: Out-of-the-box integration with various platforms and services including:
+
+   - Cloud platforms (AWS, GCP, Azure, etc.)
+   - Databases (MySQL, PostgreSQL, etc.)
+   - Data processing frameworks (Spark, Hadoop, etc.)
+   - Messaging systems (Slack, Email, etc.)
+   - Monitoring tools (Prometheus, Grafana, etc.)
+
+5. **Secure**: Implements robust security features including:
+   - Role-based access control (RBAC)
+   - Secure connection handling
+   - Integration with enterprise authentication systems
+
+### Common Use Cases
+
+1. **ETL/ELT Processes**: Orchestrate extract, transform, load (ETL) or extract, load, transform (ELT) workflows to move and process data between systems.
+
+2. **Data Warehouse Operations**: Schedule and manage data warehouse refresh, aggregations, and maintenance tasks.
+
+3. **Machine Learning Pipelines**: Coordinate feature engineering, model training, evaluation, and deployment processes.
+
+4. **Report Generation**: Automate the creation and distribution of business intelligence reports.
+
+5. **Infrastructure Management**: Schedule and monitor infrastructure provisioning, updates, and maintenance tasks.
+
+6. **API Orchestration**: Coordinate complex sequences of API calls with dependencies and error handling.
+
+7. **Cloud Resource Management**: Manage cloud resources lifecycle including provisioning, scaling, and teardown.
 
 ## Architecture
 
@@ -80,6 +133,7 @@ Airflow's operation follows a straightforward yet powerful workflow model:
    - Users define DAGs (Directed Acyclic Graphs) in Python
    - Each DAG represents a collection of tasks with their dependencies
    - Example:
+
      ```python
      with DAG('example_dag', start_date=datetime(2023, 1, 1),
               schedule_interval='@daily') as dag:
@@ -176,6 +230,49 @@ Tasks in Airflow follow a defined lifecycle with multiple possible states:
 ## Advantages of Airflow
 
 Airflow offers numerous advantages that have made it the industry standard for workflow orchestration:
+
+### Advantages of Representing Data Pipelines as DAGs
+
+1. **Clarity and Visualization**
+
+   - DAGs provide a clear visual representation of workflow dependencies
+   - Complex processes become easier to understand and communicate
+   - The graph structure helps quickly identify bottlenecks or optimization opportunities
+
+2. **Parallel Execution**
+
+   - Tasks without interdependencies can run in parallel
+   - Maximizes resource utilization and minimizes overall execution time
+   - Enables high-throughput processing for large-scale data operations
+
+3. **Failure Isolation**
+
+   - Failures are isolated to specific tasks without necessarily failing the entire workflow
+   - Failed tasks can be retried independently without rerunning the entire pipeline
+   - Allows for targeted debugging and troubleshooting
+
+4. **Incremental Processing**
+
+   - Only affected downstream tasks need to be rerun when a task changes
+   - Enables efficient backfilling of historical data
+   - Supports incremental data processing patterns
+
+5. **Workflow Composability**
+
+   - Complex workflows can be built by combining simpler workflows
+   - Encourages reusable, modular components
+   - Facilitates standardization across teams and projects
+
+6. **Dependency Management**
+
+   - Explicit dependencies ensure proper task sequencing
+   - Prevents race conditions and data consistency issues
+   - Makes resource dependencies clear and manageable
+
+7. **Scheduling Flexibility**
+   - DAGs can be scheduled with complex time-based rules
+   - Supports event-based triggers and external dependencies
+   - Allows for conditional execution paths based on runtime conditions
 
 ### Scalability
 
@@ -487,227 +584,144 @@ Airflow provides a comprehensive platform for the entire workflow lifecycle:
   - Op: Can perform administrative functions
   - Admin: Full control over all Airflow features
 
-## Main Principles and Features
+## How the Airflow Scheduler Executes Tasks
 
-Apache Airflow is built around several core principles and features that define its functionality and appeal:
+The Airflow Scheduler is a critical component responsible for orchestrating task execution according to defined dependencies and schedules. Here's how it works:
 
-### Core Principles
+### Scheduler Process Flow
 
-1. **DAGs (Directed Acyclic Graphs)**
+1. **DAG Parsing and Processing**
 
-   - Fundamental structure representing workflows
-   - Directed: Tasks have a clear direction of flow
-   - Acyclic: No cycles allowed (prevents infinite loops)
-   - Graph: Network of tasks with dependencies
+   - The scheduler continually scans the DAG directory for Python files
+   - Each DAG file is parsed to create DAG objects in memory
+   - The scheduler evaluates which DAGs need to be scheduled based on their schedule_interval
+   - DAG runs are created for each scheduling period that hasn't been processed yet
 
-2. **Idempotence**
+2. **Task Instance Creation**
 
-   - Tasks should produce the same result regardless of how many times they run
-   - Critical for reliability and recovery from failures
-   - Enables retries and backfilling
+   - For each DAG run, task instances are created for every task in the DAG
+   - Task instances are initially in the "no_status" state
+   - The scheduler determines the execution order based on dependencies
 
-3. **Configuration as Code**
+3. **Dependency Resolution**
 
-   - Workflows defined in Python rather than UI clicks or XML/YAML
-   - Enables version control, testing, and CI/CD integration
-   - Allows programmatic generation of complex workflows
+   - Before scheduling a task, the scheduler checks if all upstream dependencies are met
+   - This includes both task dependencies within the same DAG run and potentially cross-DAG dependencies
+   - Only tasks with all dependencies satisfied are considered for execution
 
-4. **Extensibility**
+4. **Task Scheduling**
 
-   - Plugin architecture for adding custom functionality
-   - Ability to create custom operators, hooks, and interfaces
-   - Provider packages for third-party integrations
+   - Tasks ready for execution are set to the "scheduled" state
+   - The scheduler then queues these tasks for execution
+   - Priority weights are considered to determine execution order when resources are limited
 
-5. **Operability**
-   - Rich UI for monitoring and troubleshooting
-   - Comprehensive logging and alerting
-   - Metrics for performance monitoring
+5. **Task Distribution**
 
-### DAG Structure and Definition
+   - The scheduler hands off queued tasks to the executor
+   - The executor is responsible for distributing tasks to available workers
+   - Different executor types handle task distribution differently:
+     - LocalExecutor: Runs tasks in parallel processes on a single machine
+     - CeleryExecutor: Distributes tasks across multiple worker nodes
+     - KubernetesExecutor: Dynamically provisions pods for each task
 
-DAGs are Python scripts that follow a specific structure:
+6. **State Tracking**
 
-```python
-# 1. Library Imports
-from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.operators.bash import BashOperator
+   - The scheduler continuously monitors the state of all task instances
+   - When tasks complete (success or failure), dependent tasks are re-evaluated
+   - Failed tasks may be retried based on the retry configuration
 
-# 2. DAG Arguments
-default_args = {
-    'owner': 'data_team',
-    'depends_on_past': False,
-    'email_on_failure': True,
-    'email': ['alerts@example.com'],
-    'retries': 3,
-    'retry_delay': timedelta(minutes=5),
-}
+7. **Backfilling and Catchup**
+   - The scheduler can process historical time periods (backfilling)
+   - When a new DAG is added or a DAG's schedule is changed, catchup can process missed intervals
+   - This is controlled by the catchup parameter in the DAG definition
 
-# 3. DAG Definition
-with DAG(
-    'example_etl_workflow',
-    default_args=default_args,
-    description='An example ETL workflow',
-    schedule_interval='0 0 * * *',
-    start_date=datetime(2023, 1, 1),
-    catchup=False,
-    tags=['example', 'etl'],
-) as dag:
+### Scheduler Performance Considerations
 
-    # 4. Task Definitions
-    extract = BashOperator(
-        task_id='extract',
-        bash_command='python /scripts/extract.py',
-    )
+- The scheduler is single-threaded but can process multiple DAGs concurrently
+- For large deployments, multiple scheduler instances can be run behind a load balancer
+- The parsing of DAG files can be resource-intensive, especially for complex DAGs
+- Using SubDagOperator can lead to potential deadlocks and is generally discouraged
+- Scheduler performance can be optimized through:
+  - Efficient DAG design
+  - Proper database indexing
+  - Appropriate executor configuration
+  - Strategic use of pools to manage resource allocation
 
-    transform = PythonOperator(
-        task_id='transform',
-        python_callable=transform_function,
-    )
+## Benefits of Defining Workflows as Code
 
-    load = BashOperator(
-        task_id='load',
-        bash_command='python /scripts/load.py',
-    )
+Airflow's approach of defining workflows as Python code offers significant advantages over configuration-based systems:
 
-    # 5. Task Pipeline (Dependencies)
-    extract >> transform >> load
-```
+### Programmatic Flexibility
 
-### Task Types and Operators
+1. **Dynamic Workflow Generation**
 
-Airflow provides a wide variety of operators for different task types:
+   - Generate tasks and dependencies programmatically based on runtime conditions
+   - Create tasks in loops or based on external data sources
+   - Adapt workflow structure based on parameters or environment variables
 
-1. **Action Operators**
+2. **Code Reusability**
 
-   - **BashOperator**: Executes bash commands
-     ```python
-     task = BashOperator(
-         task_id='print_date',
-         bash_command='date',
-     )
-     ```
-   - **PythonOperator**: Calls Python functions
+   - Create reusable functions and patterns
+   - Build custom operators and hooks for common operations
+   - Share workflow components across multiple DAGs
+   - Implement inheritance and composition patterns
 
-     ```python
-     def my_function(**context):
-         return "Hello World"
+3. **Conditional Logic**
+   - Implement complex branching and conditional execution
+   - Skip tasks based on runtime conditions
+   - Create dynamic dependencies based on results of upstream tasks
+   - Handle edge cases and exceptions with standard Python error handling
 
-     task = PythonOperator(
-         task_id='python_task',
-         python_callable=my_function,
-     )
-     ```
+### Software Development Practices
 
-   - **SQLOperator**: Executes SQL queries
-     ```python
-     task = SQLExecuteQueryOperator(
-         task_id='create_table',
-         sql="CREATE TABLE IF NOT EXISTS users (id INT, name VARCHAR(50))",
-         conn_id='postgres_default',
-     )
-     ```
-   - **DockerOperator**: Runs a command inside a Docker container
-   - **KubernetesOperator**: Creates Kubernetes pods
-   - **EMROperator**: Manages AWS EMR clusters
-   - Many more specific to various services and platforms
+1. **Version Control**
 
-2. **Transfer Operators**
+   - Track changes to workflows over time
+   - Roll back to previous versions when needed
+   - Maintain change history and audit trail
+   - Collaborate using standard Git workflows
 
-   - Move data between systems
-   - Examples: `S3ToRedshiftOperator`, `MySQLToHiveTransfer`, etc.
-   - Handle format conversion and connection management
+2. **Testing**
 
-3. **Sensors**
-   - Wait for conditions to be met before proceeding
-   - **FileSensor**: Waits for a file to land in a location
-     ```python
-     task = FileSensor(
-         task_id='wait_for_file',
-         filepath='/data/events.json',
-         poke_interval=60,  # seconds
-     )
-     ```
-   - **S3KeySensor**: Waits for an object in S3
-   - **ExternalTaskSensor**: Waits for a task in another DAG
-   - **HttpSensor**: Waits for an HTTP endpoint to return a specific result
-   - **SqlSensor**: Waits for a SQL query to return results
+   - Unit test individual task functions
+   - Integration test workflow components
+   - Use mocking to simulate dependencies
+   - Implement CI/CD pipelines for workflow validation
 
-### Task Dependencies
+3. **Documentation**
 
-Tasks in Airflow can be linked to define the execution order:
+   - Use docstrings and comments to document workflow logic
+   - Generate documentation from code
+   - Maintain living documentation that evolves with the code
+   - Create self-documenting code through descriptive naming
 
-1. **Bitshift Operators** (most common)
+4. **Code Reviews**
+   - Leverage standard code review processes
+   - Ensure quality and consistency
+   - Share knowledge across team members
+   - Maintain coding standards and best practices
 
-   ```python
-   # Linear dependency
-   task_1 >> task_2 >> task_3
+### Integration Capabilities
 
-   # Fan-out
-   task_1 >> [task_2, task_3, task_4]
+1. **External System Integration**
 
-   # Fan-in
-   [task_2, task_3, task_4] >> task_5
+   - Import libraries to interact with external systems
+   - Use API clients and SDKs directly in workflow code
+   - Implement custom authentication and error handling
+   - Leverage the entire Python ecosystem
 
-   # Complex dependencies
-   task_1 >> [task_2, task_3] >> task_4
-   task_1 >> task_5 >> task_4
-   ```
+2. **Custom Functionality**
 
-2. **Set Methods**
+   - Implement specialized business logic
+   - Create domain-specific abstractions
+   - Build complex data transformations
+   - Incorporate machine learning models and algorithms
 
-   ```python
-   # Equivalent to task_1 >> task_2
-   task_2.set_upstream(task_1)
-   task_1.set_downstream(task_2)
-   ```
-
-3. **Chain Function**
-
-   ```python
-   from airflow.models.baseoperator import chain
-
-   # Equivalent to task_1 >> task_2 >> task_3
-   chain(task_1, task_2, task_3)
-   ```
-
-4. **Cross-Downstream Function**
-
-   ```python
-   from airflow.models.baseoperator import cross_downstream
-
-   # Creates dependencies: t1 >> [t2, t3], t4 >> [t2, t3]
-   cross_downstream([t1, t4], [t2, t3])
-   ```
-
-### XComs (Cross-Communication)
-
-XComs allow tasks to exchange data:
-
-```python
-# Task that pushes data
-def push_data(**context):
-    value = {"key": "value"}
-    context['ti'].xcom_push(key='my_data', value=value)
-
-# Task that pulls data
-def pull_data(**context):
-    value = context['ti'].xcom_pull(task_ids='push_task', key='my_data')
-    print(f"Retrieved value: {value}")
-
-push_task = PythonOperator(
-    task_id='push_task',
-    python_callable=push_data,
-)
-
-pull_task = PythonOperator(
-    task_id='pull_task',
-    python_callable=pull_data,
-)
-
-push_task >> pull_task
-```
+3. **Extensibility**
+   - Create plugins for custom operators, hooks, and interfaces
+   - Extend the Airflow web UI
+   - Develop custom executors for specialized deployment environments
+   - Build monitoring and alerting integrations
 
 ## List common use cases
 
@@ -1149,6 +1163,7 @@ Completing our overview of Apache Airflow, let's explore some advanced features 
      ```
 
 3. **Smart Sensors**
+
    - Reduce Airflow database load by consolidating sensor checks
    - More efficient for workflows with many sensors
    - Example:
@@ -1241,3 +1256,197 @@ Completing our overview of Apache Airflow, let's explore some advanced features 
    - Lint DAG files for errors
    - Deploy to staging before production
    - Version control all DAGs
+
+## Logging and Monitoring in Airflow
+
+Effective logging and monitoring are essential aspects of managing Airflow workflows in both development and production environments.
+
+### Logging Capabilities
+
+Airflow's logging system provides detailed information to monitor task status and diagnose issues with DAG runs:
+
+1. **Default Logging Configuration**
+
+   - By default, Airflow logs are saved to local file systems as log files
+   - Convenient for quick review in development environments
+   - Logs are organized hierarchically by dag_id, run_id, task_id, and attempt number
+   - Example log path: `logs/dag_id=dummy_dag/run_id=scheduled_time/task_id=task1/attempt=1.log`
+
+2. **Production Logging Options**
+
+   - For production deployments, logs can be sent to cloud storage:
+     - AWS S3
+     - Google Cloud Storage
+     - Azure Blob Storage
+   - Remote storage enables centralized access and persistence
+   - Configuration example for remote logging:
+
+   ```python
+   # In airflow.cfg or as environment variables
+   [logging]
+   remote_logging = True
+   remote_base_log_folder = s3://my-bucket/airflow/logs
+   remote_log_conn_id = aws_default
+   ```
+
+3. **Log Indexing and Analysis**
+
+   - Log files can be sent to search engines and dashboards for advanced retrieval and analysis
+   - Recommended systems:
+     - Elasticsearch: Document database and search engine for log indexing and querying
+     - Splunk: Enterprise platform for log monitoring, searching, and analysis
+   - Enables complex querying and alerting based on log patterns
+
+4. **Log Content**
+
+   - Logs contain detailed information including:
+     - Task execution commands
+     - Command results
+     - Task state transitions
+     - Error tracebacks
+     - Custom log messages from task code
+
+5. **UI-Based Log Access**
+   - Airflow's web interface provides convenient access to task logs
+   - Filter logs by DAG ID, task ID, and logical date
+   - View logs directly in the browser without navigating file systems
+   - Stream logs in real-time during task execution
+
+### Metrics and Monitoring
+
+Airflow emits various metrics that provide insights into its operational health and performance:
+
+1. **Types of Metrics**
+
+   - **Counters**: Metrics that continuously increase
+
+     - Total count of successful tasks
+     - Total count of failed tasks
+     - Number of DAG processing operations
+
+   - **Gauges**: Metrics that may increase or decrease
+
+     - Number of currently running tasks
+     - Size of the DAG bag
+     - Number of zombie tasks
+
+   - **Timers**: Metrics related to time duration
+     - Task execution time
+     - DAG processing time
+     - Time to task success/failure
+
+2. **Metrics Collection**
+
+   - StatsD: Network daemon that gathers metrics from Airflow
+   - Sends collected metrics to dedicated monitoring systems
+   - Configuration example:
+
+   ```python
+   # In airflow.cfg
+   [metrics]
+   statsd_on = True
+   statsd_host = localhost
+   statsd_port = 8125
+   statsd_prefix = airflow
+   ```
+
+3. **Monitoring Systems**
+
+   - **Prometheus**: Popular metrics monitoring and analysis system
+
+     - Collects metrics via StatsD exporter
+     - Supports alerting rules based on metric thresholds
+     - Integrates with Grafana for visualization
+
+   - **Grafana**: Visualization platform for metrics
+     - Creates dashboards for Airflow metrics
+     - Supports alerting and notifications
+     - Enables custom dashboard creation
+
+4. **Key Metrics to Monitor**
+
+   - Scheduler heartbeat
+   - DAG processing time
+   - Task success/failure rates
+   - Task duration
+   - Queue size
+   - Database connection pool usage
+
+5. **Alerting**
+   - Set up alerts for critical conditions:
+     - Failed tasks exceeding threshold
+     - DAGs not running on schedule
+     - Scheduler failures
+     - Excessive task duration
+   - Integrate with notification systems (email, Slack, PagerDuty)
+
+### Monitoring Best Practices
+
+1. **Tiered Monitoring Approach**
+
+   - **Infrastructure level**: Monitor the servers running Airflow components
+   - **Component level**: Monitor Airflow scheduler, webserver, and workers
+   - **DAG level**: Monitor individual DAG and task performance
+
+2. **Dashboard Organization**
+
+   - Create role-specific dashboards:
+     - Operations dashboard: System-level metrics
+     - Developer dashboard: DAG and task execution metrics
+     - Business dashboard: SLA compliance and pipeline success rates
+
+3. **Log Retention Policy**
+
+   - Implement appropriate log retention based on compliance and debugging needs
+   - Configure log rotation to manage disk space
+   - Archive historical logs to low-cost storage
+
+4. **Health Checks**
+
+   - Implement periodic health checks for all Airflow components
+   - Monitor database connectivity and performance
+   - Set up worker heartbeat monitoring
+
+5. **Capacity Planning**
+   - Use metrics data for capacity planning
+   - Monitor resource utilization trends
+   - Scale infrastructure based on observed usage patterns
+
+## Summary
+
+Apache Airflow is a powerful workflow orchestration platform with numerous capabilities that make it the industry standard for data pipelines. Key takeaways include:
+
+### Core Attributes
+
+- **Scalable**: Handles workflows with thousands of tasks and scales horizontally
+- **Dynamic**: Pipelines are configured as code, allowing for programmatic generation
+- **Extensible**: Easy to define custom operators, executors, and extend the library
+- **Elegant**: Pipelines are lean and explicit with clear parameterization
+
+### Main Features
+
+- **Pure Python Workflows**: Define workflows in Python for maintainability, versioning, and collaboration
+- **Rich UI**: Comprehensive web interface for monitoring and managing workflows
+- **Extensive Integration**: Out-of-the-box connections to various platforms and services
+- **Open Source**: Strong community support and continuous improvement
+
+### Workflow Management
+
+- **Task Creation**: Tasks are created with Airflow operators (Python, Bash, SQL, etc.)
+- **Pipeline Definition**: Pipelines are specified as dependencies between tasks
+- **Scheduling**: Set schedules to specify how often to re-run your DAG
+- **Visualization**: View your DAG in graph or grid mode for better understanding
+
+### DAG Structure
+
+- **DAG Arguments**: Define behavior and properties of the workflow
+- **Task Definitions**: Specify the actual work to be performed
+- **Task Dependencies**: Establish the execution order and relationships
+
+### Monitoring and Maintenance
+
+- **Logging**: Save logs locally or send to cloud storage, search engines, and analyzers
+- **Metrics**: Track counters, gauges, and timers to monitor component health
+- **Analysis Tools**: Use Elasticsearch or Splunk for logs and Prometheus for metrics
+
+By leveraging these capabilities, Apache Airflow enables organizations to build robust, maintainable, and scalable data pipelines that can adapt to changing requirements and growing data volumes.
